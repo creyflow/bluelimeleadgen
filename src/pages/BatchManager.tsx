@@ -50,9 +50,8 @@ export default function BatchManager() {
   useEffect(() => {
     loadBatches();
     
-    // Auto-refresh ogni 10 secondi
-    const interval = setInterval(loadBatches, 10000);
-    return () => clearInterval(interval);
+    // NO auto-refresh! Ricaricare solo manualmente per ridurre le query
+    // Se serve vedere gli aggiornamenti in tempo reale, l'utente usa il bottone Ricarica
   }, []);
 
   const loadBatches = async () => {

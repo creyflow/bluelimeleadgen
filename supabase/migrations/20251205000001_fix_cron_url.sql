@@ -1,8 +1,8 @@
--- Enable required extensions for cron jobs
-CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA extensions;
-CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+-- Fix pg_cron scheduler with correct Supabase project URL
+-- Drop old cron job with wrong URL
+SELECT cron.unschedule('process-search-queue-job');
 
--- Create a cron job that runs every minute to process the search queue
+-- Create new cron job with correct URL (vpselawcoxswncpixrno)
 SELECT cron.schedule(
   'process-search-queue-job',
   '* * * * *', -- Every minute
@@ -15,3 +15,6 @@ SELECT cron.schedule(
     ) as request_id;
   $$
 );
+
+-- Verify the cron job is active
+SELECT * FROM cron.job WHERE jobname = 'process-search-queue-job';

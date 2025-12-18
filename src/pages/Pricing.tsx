@@ -1,11 +1,23 @@
 
 import { useEffect, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Zap, CreditCard, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArrowLeft } from "lucide-react";
 
 interface Plan {
   id: string;
@@ -14,6 +26,7 @@ interface Plan {
   monthly_email_limit: number;
   validation_limit: number;
   monthly_search_limit?: number;
+  speed_limit?: number;
   features: string[];
 }
 
@@ -26,6 +39,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: 5000,
     validation_limit: 5000,
     monthly_search_limit: 100,
+    speed_limit: 1,
     features: ["Validazione base", "Export CSV/XLSX"]
   },
   {
@@ -35,6 +49,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: 10000,
     validation_limit: 10000,
     monthly_search_limit: 250,
+    speed_limit: 1,
     features: ["Validazione avanzata", "Export CSV/XLSX/JSON", "Supporto prioritario"]
   },
   {
@@ -44,6 +59,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: 25000,
     validation_limit: 25000,
     monthly_search_limit: 500,
+    speed_limit: 3,
     features: ["Validazione avanzata", "Tutti i formati export", "Accesso API", "Supporto prioritario"]
   },
   {
@@ -53,6 +69,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: 100000,
     validation_limit: 100000,
     monthly_search_limit: 1000,
+    speed_limit: 10,
     features: ["Validazione avanzata", "Tutti i formati export", "Accesso API", "Supporto dedicato", "Integrazione custom"]
   },
   {
@@ -62,6 +79,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: 500000,
     validation_limit: 500000,
     monthly_search_limit: 50000,
+    speed_limit: 10,
     features: ["Validazione avanzata", "Tutti i formati export", "Accesso API completo", "Supporto dedicato", "Integrazione custom"]
   },
   {
@@ -71,6 +89,7 @@ const FALLBACK_PLANS: Plan[] = [
     monthly_email_limit: -1,
     validation_limit: -1,
     monthly_search_limit: -1,
+    speed_limit: 10,
     features: ["Tutto illimitato", "Validazione avanzata", "Tutti i formati export", "Accesso API completo", "Supporto dedicato", "Integrazione custom"]
   }
 ];
@@ -80,6 +99,9 @@ export default function Pricing() {
   const [loading, setLoading] = useState(true);
   const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [promoCode, setPromoCode] = useState("");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -154,6 +176,7 @@ export default function Pricing() {
         description: "Il tuo piano è stato aggiornato con successo.",
       });
       
+      setIsDialogOpen(false);
       // Refresh the page or state to reflect changes
       window.location.reload();
       
@@ -169,6 +192,36 @@ export default function Pricing() {
     }
   };
 
+  const handlePromoCodeSubmit = () => {
+    if (promoCode.toLowerCase() === "bluelime") {
+      if (selectedPlan) {
+        // Il codice vale solo fino al piano Elite
+        const allowedPlans = ['free', 'basic', 'pro', 'elite'];
+        if (allowedPlans.includes(selectedPlan.id)) {
+          handleUpgrade(selectedPlan.id);
+        } else {
+          toast({
+            title: "Codice non valido per questo piano",
+            description: "Il codice promozionale è valido solo per piani fino a Elite.",
+            variant: "destructive",
+          });
+        }
+      }
+    } else {
+      toast({
+        title: "Codice non valido",
+        description: "Il codice promozionale inserito non è valido.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openUpgradeModal = (plan: Plan) => {
+    setSelectedPlan(plan);
+    setPromoCode("");
+    setIsDialogOpen(true);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -179,6 +232,15 @@ export default function Pricing() {
 
   return (
     <div className="container mx-auto py-10 px-4">
+      <Button 
+        variant="ghost" 
+        onClick={() => navigate("/validate")} 
+        className="mb-6"
+      >
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        Torna alla Validazione
+      </Button>
+
       <div className="text-center mb-10">
         <h1 className="text-4xl font-bold tracking-tight mb-4">Prezzi Semplici e Trasparenti</h1>
         <p className="text-xl text-muted-foreground">
@@ -220,6 +282,14 @@ export default function Pricing() {
                         : `Fino a ${plan.validation_limit.toLocaleString()} validazioni email/mese`}
                     </span>
                   </li>
+                  {plan.speed_limit && (
+                    <li className="flex items-center">
+                      <Zap className="h-4 w-4 mr-2 text-yellow-500" />
+                      <span className="text-sm">
+                        Velocità: {plan.speed_limit} email/sec
+                      </span>
+                    </li>
+                  )}
                   {/* Parse features if they are stored as JSON string or array */}
                   {(typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features).map((feature: string, i: number) => (
                     <li key={i} className="flex items-center">
@@ -234,7 +304,7 @@ export default function Pricing() {
                   className="w-full" 
                   variant={isCurrentPlan ? "outline" : "default"}
                   disabled={isCurrentPlan || upgrading === plan.id}
-                  onClick={() => handleUpgrade(plan.id)}
+                  onClick={() => openUpgradeModal(plan)}
                 >
                   {upgrading === plan.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {isCurrentPlan ? "Piano Attuale" : "Passa a questo piano"}
@@ -244,6 +314,57 @@ export default function Pricing() {
           );
         })}
       </div>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Attiva Piano {selectedPlan?.name}</DialogTitle>
+            <DialogDescription>
+              Scegli il metodo di pagamento per attivare il piano {selectedPlan?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Tabs defaultValue="code" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="code">Codice Promo</TabsTrigger>
+              <TabsTrigger value="card">Carta di Credito</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="code" className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="promo">Inserisci Codice</Label>
+                <div className="flex gap-2">
+                  <Input 
+                    id="promo" 
+                    placeholder="Es. BLUELIME" 
+                    value={promoCode}
+                    onChange={(e) => setPromoCode(e.target.value)}
+                  />
+                  <Button onClick={handlePromoCodeSubmit} disabled={upgrading === selectedPlan?.id}>
+                    {upgrading === selectedPlan?.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ticket className="h-4 w-4" />}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Inserisci il codice "bluelime" per attivare piani fino a Elite gratuitamente (modalità test).
+                </p>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="card" className="space-y-4 py-4">
+              <div className="p-4 border rounded-lg bg-muted/50 text-center space-y-3">
+                <CreditCard className="h-10 w-10 mx-auto text-muted-foreground" />
+                <h3 className="font-semibold">Pagamenti Stripe</h3>
+                <p className="text-sm text-muted-foreground">
+                  L'integrazione con Stripe sarà disponibile a breve. Per ora, utilizza un codice promozionale.
+                </p>
+                <Button disabled className="w-full">
+                  Paga con Carta (Presto disponibile)
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

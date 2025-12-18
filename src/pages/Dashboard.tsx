@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, Mail, Zap, LogOut, CheckCircle, BookOpen } from "lucide-react";
+import { Search, Mail, Zap, LogOut, CheckCircle, BookOpen, User } from "lucide-react";
 import logo from "@/assets/logo.png";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -58,10 +58,16 @@ const Dashboard = () => {
               <p className="text-muted-foreground mt-1">Dashboard centrale</p>
             </div>
           </div>
-          <Button onClick={handleLogout} variant="outline" size="sm">
-            <LogOut className="mr-2 h-4 w-4" />
-            Esci
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => navigate('/profile')} variant="ghost" size="sm">
+              <User className="mr-2 h-4 w-4" />
+              Profilo
+            </Button>
+            <Button onClick={handleLogout} variant="outline" size="sm">
+              <LogOut className="mr-2 h-4 w-4" />
+              Esci
+            </Button>
+          </div>
         </header>
 
         {isLoading ? (

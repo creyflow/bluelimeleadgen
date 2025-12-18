@@ -5,10 +5,21 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Upload, ArrowLeft, Search, FileText } from "lucide-react";
+import { Upload, ArrowLeft, Search, FileText, Trash2, Play, Loader2 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Tabs,
   TabsContent,
@@ -49,7 +60,7 @@ const Validate = () => {
   const [emails, setEmails] = useState<string[]>([]);
   const [pastedEmails, setPastedEmails] = useState("");
   const [listName, setListName] = useState("");
-  const [isValidating, setIsValidating] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [validationHistory, setValidationHistory] = useState<ValidationList[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -69,6 +80,34 @@ const Validate = () => {
     }
 
     setValidationHistory(data || []);
+  };
+
+  const deleteList = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent navigation when clicking delete
+    
+    try {
+      // Delete results first
+      await supabase.from("validation_results").delete().eq("validation_list_id", id);
+      // Delete contacts
+      await supabase.from("contacts").delete().eq("list_id", id);
+      // Delete list
+      const { error } = await supabase.from("validation_lists").delete().eq("id", id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Lista eliminata",
+        description: "La lista è stata rimossa correttamente",
+      });
+      loadValidationHistory();
+    } catch (error) {
+      console.error("Error deleting list:", error);
+      toast({
+        title: "Errore",
+        description: "Impossibile eliminare la lista",
+        variant: "destructive",
+      });
+    }
   };
 
   const handlePasteEmails = () => {
@@ -116,6 +155,13 @@ const Validate = () => {
         });
 
         setEmails([...new Set(emailList)]);
+        
+        // Auto-set list name from file name if empty
+        if (!listName && file.name) {
+          const nameWithoutExt = file.name.split('.').slice(0, -1).join('.');
+          setListName(nameWithoutExt);
+        }
+
         toast({
           title: "File caricato",
           description: `${emailList.length} email uniche trovate`,
@@ -131,7 +177,7 @@ const Validate = () => {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleValidate = async () => {
+  const handleValidateNow = async () => {
     if (emails.length === 0) {
       toast({
         title: "Nessuna email",
@@ -144,72 +190,78 @@ const Validate = () => {
     if (!listName) {
       toast({
         title: "Nome richiesto",
-        description: "Inserisci un nome per questa validazione",
+        description: "Inserisci un nome per questa lista",
         variant: "destructive",
       });
       return;
     }
 
-    setIsValidating(true);
+    setIsCreating(true);
 
     try {
-      // Call new simplified validation function
-      const { data, error } = await supabase.functions.invoke("validate-batch", {
-        body: { emails, listName },
+      // 1. Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("User not authenticated");
+
+      // 2. Create List with status 'processing' immediately
+      const { data: list, error: listError } = await supabase
+        .from("validation_lists")
+        .insert({
+          name: listName,
+          user_id: user.id,
+          total_emails: emails.length,
+          status: 'processing',
+          processed_emails: 0
+        })
+        .select()
+        .single();
+
+      if (listError) throw listError;
+
+      // 3. Insert Contacts (in batches of 1000 to be safe)
+      const contactsData = emails.map(email => ({
+        list_id: list.id,
+        email: email,
+        name: email.split('@')[0] // Simple name extraction
+      }));
+
+      const batchSize = 1000;
+      for (let i = 0; i < contactsData.length; i += batchSize) {
+        const batch = contactsData.slice(i, i + batchSize);
+        const { error: contactsError } = await supabase
+          .from("contacts")
+          .insert(batch);
+        
+        if (contactsError) throw contactsError;
+      }
+
+      // 4. Trigger Validation Immediately
+      const { error: validationError } = await supabase.functions.invoke("validate-batch", {
+        body: { 
+          emails, 
+          listName: list.name,
+          existingListId: list.id 
+        },
       });
 
-      if (error) throw error;
-
-      const listId = data.list_id;
+      if (validationError) throw validationError;
 
       toast({
-        title: "✅ Validazione avviata",
-        description: `Batch di ${emails.length} email creato su Truelist. Controllo stato in corso...`,
+        title: "🚀 Validazione avviata",
+        description: "Analisi della lista in corso...",
       });
 
-      // Start polling for status
-      const pollInterval = setInterval(async () => {
-        try {
-          const { data: statusData, error: statusError } = await supabase.functions.invoke(
-            `check-validation-status?list_id=${listId}`,
-            { method: "GET" }
-          );
-
-          if (statusError) {
-            console.error('Status check error:', statusError);
-            return;
-          }
-
-          if (statusData.status === 'completed') {
-            clearInterval(pollInterval);
-            toast({
-              title: "🎉 Validazione completata!",
-              description: `${statusData.deliverable_count} email valide, ${statusData.undeliverable_count} non valide`,
-            });
-            await loadValidationHistory();
-            setIsValidating(false);
-          }
-        } catch (err) {
-          console.error('Polling error:', err);
-        }
-      }, 5000); // Poll every 5 seconds
-
-      // Stop polling after 10 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        setIsValidating(false);
-      }, 600000);
-
-      await loadValidationHistory();
-      setEmails([]);
-      setListName("");
+      // 5. Navigate immediately to results
+      navigate(`/validate/${list.id}`);
+      
     } catch (error: any) {
+      console.error("Error creating list:", error);
       toast({
         title: "Errore",
-        description: error.message,
+        description: error.message || "Impossibile avviare la validazione",
         variant: "destructive",
       });
-      setIsValidating(false);
+      setIsCreating(false); // Only reset if error, otherwise we navigate away
     }
   };
 
@@ -262,7 +314,7 @@ const Validate = () => {
               placeholder="Nome lista (es: Lista clienti Q4 2024)"
               value={listName}
               onChange={(e) => setListName(e.target.value)}
-              disabled={isValidating}
+              disabled={isCreating}
               className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
             />
 
@@ -283,12 +335,12 @@ const Validate = () => {
                   placeholder="Incolla le email qui (una per riga o separate da virgole)&#10;esempio@email.com&#10;altro@email.com"
                   value={pastedEmails}
                   onChange={(e) => setPastedEmails(e.target.value)}
-                  disabled={isValidating}
+                  disabled={isCreating}
                   className="min-h-[200px] bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500 font-mono text-sm"
                 />
                 <Button
                   onClick={handlePasteEmails}
-                  disabled={isValidating || !pastedEmails.trim()}
+                  disabled={isCreating || !pastedEmails.trim()}
                   variant="outline"
                   className="w-full bg-slate-800/30 border-slate-700 hover:bg-slate-800 text-slate-300"
                 >
@@ -313,7 +365,7 @@ const Validate = () => {
                         type="file"
                         accept=".csv,.xlsx,.xls"
                         onChange={handleFileUpload}
-                        disabled={isValidating}
+                        disabled={isCreating}
                         className="absolute inset-0 opacity-0 cursor-pointer"
                       />
                     </label>
@@ -344,17 +396,20 @@ const Validate = () => {
                 </div>
                 
                 <Button
-                  onClick={handleValidate}
-                  disabled={isValidating}
-                  className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700"
+                  onClick={handleValidateNow}
+                  disabled={isCreating}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-500/20"
                   size="lg"
                 >
-                  {isValidating ? (
-                    "🔄 Validazione in corso..."
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Avvio validazione...
+                    </>
                   ) : (
                     <>
-                      <Upload className="mr-2 h-5 w-5" />
-                      Valida {emails.length} email
+                      <Play className="mr-2 h-5 w-5" />
+                      Valida Ora
                     </>
                   )}
                 </Button>
@@ -385,11 +440,12 @@ const Validate = () => {
               {filteredLists.map((list) => (
                 <div
                   key={list.id}
-                  className="flex items-center justify-between p-4 rounded-lg bg-slate-800/30 border border-slate-700 hover:border-slate-600 transition-colors"
+                  onClick={() => navigate(`/validate/${list.id}`)}
+                  className="flex items-center justify-between p-4 rounded-lg bg-slate-800/30 border border-slate-700 hover:border-slate-600 transition-colors cursor-pointer group"
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-semibold text-white">{list.name}</h3>
+                      <h3 className="font-semibold text-white group-hover:text-blue-400 transition-colors">{list.name}</h3>
                       {getStatusBadge(list.status)}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-slate-400">
@@ -407,18 +463,45 @@ const Validate = () => {
                     </div>
                   </div>
                   
-                  <Button
-                    size="sm"
-                    onClick={() => navigate(`/validate/${list.id}`)}
-                    className={
-                      list.status === "unvalidated"
-                        ? "bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-600/30"
-                        : "bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 border border-cyan-600/30"
-                    }
-                  >
-                    <Search className="mr-2 h-4 w-4" />
-                    {list.status === "unvalidated" ? "Valida" : "Vedi risultati"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={
+                        list.status === "unvalidated"
+                          ? "text-amber-400 hover:text-amber-300 hover:bg-amber-900/20"
+                          : "text-cyan-400 hover:text-cyan-300 hover:bg-cyan-900/20"
+                      }
+                    >
+                      <Search className="mr-2 h-4 w-4" />
+                      {list.status === "unvalidated" ? "Valida" : "Vedi risultati"}
+                    </Button>
+
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="text-slate-500 hover:text-red-400 hover:bg-red-900/20"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="bg-slate-900 border-slate-800 text-white" onClick={(e) => e.stopPropagation()}>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Elimina Lista</AlertDialogTitle>
+                          <AlertDialogDescription className="text-slate-400">
+                            Sei sicuro di voler eliminare la lista "{list.name}"? Questa azione non può essere annullata.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="bg-slate-800 text-white border-slate-700 hover:bg-slate-700">Annulla</AlertDialogCancel>
+                          <AlertDialogAction onClick={(e) => deleteList(list.id, e)} className="bg-red-600 hover:bg-red-700 text-white">Elimina</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
               ))}
             </div>

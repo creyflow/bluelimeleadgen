@@ -35,7 +35,7 @@ serve(async (req) => {
     }
 
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_URL') ?? 'https://vpselawcoxswncpixrno.supabase.co',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader } } }
     );
@@ -49,6 +49,12 @@ serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Initialize Admin Client EARLY so it's available for limit checks
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? 'https://vpselawcoxswncpixrno.supabase.co',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
 
     // Parse request body
     const { emails, listName, existingListId }: ValidationRequest = await req.json();
@@ -107,12 +113,6 @@ serve(async (req) => {
     if (!truelistApiKey) {
       throw new Error('TRUELIST_API_KEY not configured');
     }
-
-    // Create or update validation list in database
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
 
     let validationListId: string;
 
@@ -206,6 +206,12 @@ serve(async (req) => {
     const randomId = crypto.randomUUID().slice(0, 8);
     const uniqueFilename = `batch_${randomId}_${Date.now()}.json`;
     formData.append('filename', uniqueFilename);
+
+    // Add webhook URL for Truelist to call when validation is complete
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? 'https://vpselawcoxswncpixrno.supabase.co';
+    const webhookUrl = `${supabaseUrl}/functions/v1/process-validation-batch?list_id=${validationListId}`;
+    formData.append('webhook_url', webhookUrl);
+    console.log(`Setting webhook URL: ${webhookUrl}`);
 
     console.log(`Creating Truelist batch for ${emails.length} emails with filename: ${uniqueFilename}`);
 

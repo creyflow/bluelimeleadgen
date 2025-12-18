@@ -61,10 +61,13 @@ export default function BatchDetails() {
     
     loadBatchData();
     
-    // Auto-refresh ogni 5 secondi
-    const interval = setInterval(loadBatchData, 5000);
-    return () => clearInterval(interval);
-  }, [batchId]); // loadBatchData is stable or defined inside, but better to include it if it was a prop. Here it's local.
+    // Auto-refresh SOLO se il batch è in elaborazione
+    // Se è completato, disabilita il refresh per risparmiare query
+    if (batch?.status === 'running') {
+      const interval = setInterval(loadBatchData, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [batchId, batch?.status]);
 
   const loadBatchData = async () => {
     try {

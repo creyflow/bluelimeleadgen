@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /leads/
+
+  # API proxy rules
+  RewriteRule ^/leads/api/(.*)$ /api/$1 [P]
+
+  # SPA routing
+  RewriteCond %{REQUEST_URI} ^/leads
+  RewriteCond %{REQUEST_URI} !^/leads/api
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /leads/index.html [L]
+</IfModule>

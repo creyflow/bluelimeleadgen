@@ -15,6 +15,7 @@ import UserGuide from "./pages/UserGuide";
 import Validate from "./pages/Validate";
 import ValidationResults from "./pages/ValidationResults";
 import Pricing from "./pages/Pricing";
+import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -25,11 +26,12 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
+      <BrowserRouter basename="/leads">
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/search" element={<ProtectedRoute><Search /></ProtectedRoute>} />
           <Route path="/contacts" element={<ProtectedRoute><Contacts /></ProtectedRoute>} />
           <Route path="/searches" element={<ProtectedRoute><Searches /></ProtectedRoute>} />
