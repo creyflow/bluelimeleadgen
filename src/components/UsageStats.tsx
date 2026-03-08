@@ -62,26 +62,36 @@ export function UsageStats() {
       // We need to find the active usage record. 
       // Since we don't have a simple "get current" RPC, we query by date
       const now = new Date().toISOString();
-      const { data: usageData } = await supabase
+      const { data: usageData, error: usageError } = await supabase
         .from('usage_records')
         .select('*')
         .eq('user_id', user.id)
         .lte('period_start', now)
         .gte('period_end', now)
-        .single();
+        .order('period_start', { ascending: false })  // Most recent first
+        .limit(1)                                      // Only one result
+        .maybeSingle();  // Returns null if no data, doesn't throw 406
+
+      if (usageError) {
+        console.error('Error fetching current usage:', usageError);
+      }
 
       if (usageData) {
         setUsage(usageData);
       } else {
         // Fallback if no record found (e.g. new user before trigger ran or edge case)
         // Try to fetch the latest record
-        const { data: latestUsage } = await supabase
+        const { data: latestUsage, error: latestError } = await supabase
           .from('usage_records')
           .select('*')
           .eq('user_id', user.id)
           .order('period_start', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
+        
+        if (latestError) {
+          console.error('Error fetching latest usage:', latestError);
+        }
           
         if (latestUsage) setUsage(latestUsage);
       }

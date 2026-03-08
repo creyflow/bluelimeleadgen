@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import * as cheerio from "https://esm.sh/cheerio@1.0.0-rc.12";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,7 +14,7 @@ serve(async (req) => {
 
   try {
     const requestData = await req.json();
-    
+
     // Extract parameters directly from request
     const query = requestData.query;
     const location = requestData.location;
@@ -25,7 +26,7 @@ serve(async (req) => {
     const providedUserId = requestData.user_id; // From batch processor
     const country = requestData.country || 'it'; // 🌍 Country code (default: Italy)
     const batchName = requestData.batch_name; // Nome del batch per validation list
-    
+
     if (!query) {
       throw new Error('Query is required');
     }
@@ -36,21 +37,21 @@ serve(async (req) => {
 
     // Build enhanced search query with email providers and target names for better results
     let searchQuery = query;
-    
+
     // Add email providers to query if specified (critical for finding emails in Google index)
     if (emailProviders && emailProviders.length > 0) {
       const emailQuery = emailProviders.map((p: string) => `"${p}"`).join(' OR ');
       searchQuery = `${searchQuery} (${emailQuery})`;
       console.log(`Enhanced query with email providers: ${searchQuery}`);
     }
-    
+
     // Add target names to query if specified (improves search relevance)
     if (targetNames && targetNames.length > 0) {
       const namesQuery = targetNames.slice(0, 5).map((n: string) => `"${n.toLowerCase()}"`).join(' OR ');
       searchQuery = `${searchQuery} (${namesQuery})`;
       console.log(`Enhanced query with names: ${searchQuery}`);
     }
-    
+
     // 🎯 INJECT LOCATION into query for better geo-targeting on social media
     const sanitizeLocationForQuery = (loc: unknown): string | null => {
       if (typeof loc !== 'string') return null;
@@ -61,20 +62,20 @@ serve(async (req) => {
       if (!l) return null;
       return l;
     };
-    
+
     const cityName = sanitizeLocationForQuery(location);
     if (cityName) {
       // Add city as both text and hashtag for social media platforms
       searchQuery = `${searchQuery} ("${cityName}" OR #${cityName})`;
       console.log(`🎯 Geo-targeting enhanced: injected city "${cityName}" into query`);
     }
-    
+
     // 🇮🇹 FORCE ITALIAN RESULTS: When country=it and no city specified, add Italy to query
     if (country === 'it' && !cityName) {
       searchQuery = `${searchQuery} (Italy OR Italia)`;
       console.log(`🇮🇹 Forcing Italian geo-targeting: added "Italy OR Italia" to query`);
     }
-    
+
     console.log('Final search query sent to Serper:', searchQuery);
 
     // Call Serper API
@@ -92,7 +93,7 @@ serve(async (req) => {
 
     // Get user ID: from body (batch) or from auth header (frontend)
     let userId: string | null = providedUserId || null;
-    
+
     if (!userId && authHeader) {
       const token = authHeader.replace('Bearer ', '');
       const { data: { user } } = await supabase.auth.getUser(token);
@@ -133,7 +134,7 @@ serve(async (req) => {
     // Save search to database if user is authenticated
     let searchId: string | null = null;
     let listId: string | null = null;
-    
+
     if (userId) {
       const { data: searchData, error: searchError } = await supabase
         .from('searches')
@@ -145,13 +146,13 @@ serve(async (req) => {
         console.error('Error saving search:', searchError);
       } else {
         searchId = searchData.id;
-        
+
         // Create validation list for this search (status='unvalidated')
         // Use batch_name if provided, otherwise generate from query
-        const listName = batchName 
-          ? `Batch: ${batchName}` 
+        const listName = batchName
+          ? `Batch: ${batchName}`
           : `Search: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`;
-          
+
         const { data: listData, error: listError } = await supabase
           .from('validation_lists')
           .insert({
@@ -162,7 +163,7 @@ serve(async (req) => {
           })
           .select()
           .single();
-          
+
         if (listError) {
           console.error('Error creating validation list:', listError);
         } else {
@@ -177,7 +178,7 @@ serve(async (req) => {
     // Loop through pages
     for (let page = 1; page <= numPages; page++) {
       console.log(`Fetching page ${page}/${numPages}`);
-      
+
       const serperBody: any = {
         q: searchQuery,
         num: 10,
@@ -239,13 +240,13 @@ serve(async (req) => {
 
       const serperData = await serperResponse.json();
       const resultCount = serperData.organic?.length || 0;
-      
+
       // 📊 DETAILED LOGGING: Track Serper results
       console.log(`\n📊 === PAGE ${page}/${numPages} RESULTS ===`);
       console.log(`🔍 Serper returned: ${resultCount} organic results`);
       console.log(`💰 Credits used: ${page} (total so far)`);
       console.log(`📧 Contacts found so far: ${allContacts.length}`);
-      
+
       // Log first 3 result URLs to verify geo-targeting
       if (serperData.organic?.length > 0) {
         console.log(`Sample URLs from page ${page}:`);
@@ -256,8 +257,8 @@ serve(async (req) => {
 
       // Extract contacts from this page with filters (including city filtering)
       const pageContacts = await extractContactsFromResults(
-        serperData, 
-        searchId, 
+        serperData,
+        searchId,
         listId,
         seenEmails,
         supabase,
@@ -267,7 +268,7 @@ serve(async (req) => {
         targetNames,
         cityName // Pass city name for filtering
       );
-      
+
       allContacts.push(...pageContacts);
       console.log(`Page ${page}: extracted ${pageContacts.length} new contacts (total: ${allContacts.length})`);
     }
@@ -291,7 +292,7 @@ serve(async (req) => {
         p_metric: 'searches',
         p_amount: 1
       });
-      
+
       if (searchUsageError) {
         console.error('Error incrementing search usage:', searchUsageError);
       }
@@ -303,7 +304,7 @@ serve(async (req) => {
           p_metric: 'emails_found',
           p_amount: allContacts.length
         });
-        
+
         if (usageError) {
           console.error('Error incrementing usage:', usageError);
         } else {
@@ -314,11 +315,11 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ contacts: allContacts, list_id: listId }),
-      { 
-        headers: { 
+      {
+        headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-        } 
+        }
       }
     );
 
@@ -327,20 +328,20 @@ serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
       JSON.stringify({ error: errorMessage }),
-      { 
+      {
         status: 400,
-        headers: { 
+        headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-        } 
+        }
       }
     );
   }
 });
 
 async function extractContactsFromResults(
-  serperData: any, 
-  searchId: string | null, 
+  serperData: any,
+  searchId: string | null,
   listId: string | null,
   seenEmails: Set<string>,
   supabase: any,
@@ -348,11 +349,12 @@ async function extractContactsFromResults(
   emailProviders: string[] = [],
   websites: string[] = [],
   targetNames: string[] = [],
-  cityFilter: string | null = null // 🎯 NEW: City filter for geo-targeting
+  cityFilter: string | null = null, // 🎯 NEW: City filter for geo-targeting
+  query: string | null = null // 🔒 NEW: Query for strict relevance filtering
 ) {
   const contacts: any[] = [];
   const results = serperData.organic || [];
-  
+
   // 📊 METRICS TRACKING
   let fetchedPages = 0;
   let emailsFoundInHTML = 0;
@@ -363,7 +365,7 @@ async function extractContactsFromResults(
   let totalEmailsExtracted = 0;
   let personalEmails = 0; // Gmail, Yahoo, Hotmail, etc.
   let businessEmails = 0; // Domini aziendali
-  
+
   for (const result of results) {
     const snippet = result.snippet || '';
     const title = result.title || '';
@@ -371,12 +373,28 @@ async function extractContactsFromResults(
     let text = `${title} ${snippet}`;
     let htmlFetched = false;
 
+    // 🔒 STRICT FILTER: Skip results where title/snippet don't contain the query keywords
+    // We already forced quotes in the query, now we enforce them in the result preview.
+    // This doubles down on relevance.
+    if (query) {
+      // Extract required words from the original query (removing special chars)
+      const requiredWords = query.replace(/[^\w\s]/gi, '').split(' ').filter((w: string) => w.length > 3).map((w: string) => w.toLowerCase());
+      const textLower = text.toLowerCase();
+
+      const allWordsPresent = requiredWords.every((word: string) => textLower.includes(word));
+
+      if (!allWordsPresent && requiredWords.length > 0) {
+        console.log(`🚫 SKIPPED: Result "${title.substring(0, 30)}..." missing keywords: ${requiredWords.filter((w: string) => !textLower.includes(w)).join(', ')}`);
+        continue;
+      }
+    }
+
     // 🎯 CITY FILTER: Skip results that don't mention the city (when cityFilter is set)
     if (cityFilter) {
       const textLower = text.toLowerCase();
       const cityLower = cityFilter.toLowerCase();
       const hasCityMention = textLower.includes(cityLower);
-      
+
       if (!hasCityMention) {
         skippedByCityFilter++;
         continue; // Skip this result if city is not mentioned
@@ -399,33 +417,54 @@ async function extractContactsFromResults(
     }
 
     // Check if this is a social media link (Instagram, Facebook, TikTok, LinkedIn)
-    const isSocialMedia = link.includes('instagram.com') || 
-                          link.includes('facebook.com') || 
-                          link.includes('tiktok.com') ||
-                          link.includes('linkedin.com');
+    const isSocialMedia = link.includes('instagram.com') ||
+      link.includes('facebook.com') ||
+      link.includes('tiktok.com') ||
+      link.includes('linkedin.com');
 
     // For social media, ONLY use snippets (don't fetch HTML - it's blocked)
     // For other sites, try to fetch HTML for more emails
     if (!isSocialMedia) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 sec timeout
+
         const htmlResponse = await fetch(link, {
           signal: controller.signal,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (htmlResponse.ok) {
           const contentType = htmlResponse.headers.get('content-type') || '';
           if (contentType.includes('text/html')) {
             const html = await htmlResponse.text();
-            const limitedHtml = html.substring(0, 50000); // Limit to 50KB
-            text += ' ' + limitedHtml;
+
+            // --- DOM PARSING WITH CHEERIO ---
+            const $ = cheerio.load(html);
+
+            // 1. Extract from mailto links (Highest Confidence)
+            $('a[href^="mailto:"]').each((_: number, elem: any) => {
+              const href = $(elem).attr('href');
+              if (href) {
+                const email = href.replace('mailto:', '').split('?')[0].trim();
+                text += ' ' + email;
+              }
+            });
+
+            // 2. Extract from Contact sections (High Confidence)
+            // Look for elements with IDs or classes containing "contact", "about", "footer"
+            const contactAreas = $('footer, #contact, .contact, #footer, .footer, [class*="contact"], [id*="contact"]').text();
+            text += ' ' + contactAreas;
+
+            // 3. Fallback: Add visible body text (Lower Confidence but broad coverage)
+            // Limit to avoid memory issues, but verify important tags first
+            const bodyText = $('body').text().replace(/\s+/g, ' ').substring(0, 50000);
+            text += ' ' + bodyText;
+
             htmlFetched = true;
             fetchedPages++;
           }
@@ -441,10 +480,10 @@ async function extractContactsFromResults(
     // Extract emails with improved regex - include accented characters
     const emailRegex = /\b[A-Za-z0-9àèéìòùÀÈÉÌÒÙ][\w\.\-àèéìòùÀÈÉÌÒÙ]*@[A-Za-z0-9][\w\.\-]*\.[A-Za-z]{2,}\b/gi;
     const rawEmails = text.match(emailRegex) || [];
-    
+
     // Track emails found
     totalEmailsExtracted += rawEmails.length;
-    
+
     // Filter out invalid emails (file paths, placeholders, etc)
     const invalidExtensions = ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.woff', '.ttf', '.eot', '.ico'];
     const emails = rawEmails.filter(email => {
@@ -453,9 +492,11 @@ async function extractContactsFromResults(
       if (invalidExtensions.some(ext => lowerEmail.endsWith(ext))) return false;
       // Skip common placeholder/test emails
       if (lowerEmail.includes('example') || lowerEmail.includes('test@') || lowerEmail.includes('noreply')) return false;
+      // Skip short nonsense
+      if (lowerEmail.length < 6) return false;
       return true;
     });
-    
+
     // Track where emails come from
     if (htmlFetched && emails.length > 0) {
       emailsFoundInHTML += emails.length;
@@ -469,50 +510,50 @@ async function extractContactsFromResults(
 
     for (const email of emails) {
       if (seenEmails.has(email.toLowerCase())) continue;
-      
+
       // 📧 CLASSIFY EMAIL TYPE: Personal vs Business
       const emailDomain = email.split('@')[1]?.toLowerCase() || '';
       const personalDomains = ['gmail.com', 'yahoo.com', 'yahoo.it', 'hotmail.com', 'hotmail.it', 'outlook.com', 'outlook.it', 'live.com', 'live.it', 'icloud.com', 'libero.it', 'virgilio.it', 'tiscali.it', 'tin.it'];
       const isPersonalEmail = personalDomains.includes(emailDomain);
-      
+
       if (isPersonalEmail) {
         personalEmails++;
       } else {
         businessEmails++;
       }
-      
+
       // Apply email provider filter if specified
       if (emailProviders.length > 0) {
         const emailDomainAt = '@' + emailDomain;
-        const matchesProvider = emailProviders.some(provider => 
+        const matchesProvider = emailProviders.some(provider =>
           emailDomainAt.includes(provider.toLowerCase().replace('@', ''))
         );
         if (!matchesProvider) {
           continue; // Skip this email if it doesn't match any specified provider
         }
       }
-      
+
       seenEmails.add(email.toLowerCase());
 
       const extractedName = extractName(title, snippet);
-      
-    // Apply name filter if specified - CHECK ONLY IN EMAIL ADDRESS
-    if (targetNames.length > 0) {
-      const emailLower = email.toLowerCase();
-      const emailLocalPart = emailLower.split('@')[0]; // Get part before @
-      
-      const nameInEmail = targetNames.some(targetName => {
-        const targetLower = targetName.toLowerCase().trim();
-        // Check if name appears in email address (local part or full email)
-        // Support formats: name@, name.surname@, surname.name@, namesurname@
-        return emailLocalPart.includes(targetLower) || emailLower.includes(targetLower);
-      });
-      
-      if (!nameInEmail) {
-        filteredByTargetNames++;
-        continue;
+
+      // Apply name filter if specified - CHECK ONLY IN EMAIL ADDRESS
+      if (targetNames.length > 0) {
+        const emailLower = email.toLowerCase();
+        const emailLocalPart = emailLower.split('@')[0]; // Get part before @
+
+        const nameInEmail = targetNames.some(targetName => {
+          const targetLower = targetName.toLowerCase().trim();
+          // Check if name appears in email address (local part or full email)
+          // Support formats: name@, name.surname@, surname.name@, namesurname@
+          return emailLocalPart.includes(targetLower) || emailLower.includes(targetLower);
+        });
+
+        if (!nameInEmail) {
+          filteredByTargetNames++;
+          continue;
+        }
       }
-    }
 
       const contact = {
         email: email.toLowerCase(),
@@ -574,30 +615,30 @@ async function extractContactsFromResults(
 function extractName(title: string, snippet: string): string | null {
   // Try to extract a person's name from title or snippet
   const text = `${title} ${snippet}`;
-  
+
   // Look for patterns like "Name - Company" or "Name | Company"
   const namePattern = /^([A-Z][a-z]+\s[A-Z][a-z]+)[\s\-|]/;
   const match = text.match(namePattern);
-  
+
   return match ? match[1] : null;
 }
 
 function extractOrganization(title: string, snippet: string): string | null {
   // Try to extract organization name
   const text = `${title} ${snippet}`;
-  
+
   // Look for common organization indicators
   const orgPatterns = [
     /(?:at|@)\s+([A-Z][A-Za-z\s&.]+(?:Inc|LLC|Ltd|Corp)?)/,
     /([A-Z][A-Za-z\s&.]+(?:Inc|LLC|Ltd|Corp))/,
   ];
-  
+
   for (const pattern of orgPatterns) {
     const match = text.match(pattern);
     if (match) {
       return match[1].trim();
     }
   }
-  
+
   return null;
 }

@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
 
     console.log('Starting queue processor...');
 
-    // Trova batch in stato 'running'
+    // 1. Trova batch in stato 'running'
     const { data: runningBatches, error: batchError } = await supabase
       .from('search_batches')
       .select('*')
@@ -47,17 +47,20 @@ Deno.serve(async (req) => {
       );
     }
 
+    let jobsProcessedCount = 0;
+    const PARALLEL_JOBS = 2; // Process 2 jobs at a time
+
     for (const batch of runningBatches) {
       console.log(`Processing batch: ${batch.id} - ${batch.name}`);
 
-      // Trova il prossimo job pending
+      // 2. Trova i prossimi N job pending
       const { data: jobs, error: jobsError } = await supabase
         .from('search_jobs')
         .select('*')
         .eq('batch_id', batch.id)
         .eq('status', 'pending')
         .order('created_at', { ascending: true })
-        .limit(1);
+        .limit(PARALLEL_JOBS);
 
       if (jobsError) {
         console.error('Error fetching jobs:', jobsError);
@@ -65,124 +68,166 @@ Deno.serve(async (req) => {
       }
 
       if (!jobs || jobs.length === 0) {
-        // Nessun job pending, completa il batch
-        console.log(`Batch ${batch.id} completed`);
-        await supabase
-          .from('search_batches')
-          .update({ 
-            status: 'completed',
-            completed_at: new Date().toISOString()
-          })
-          .eq('id', batch.id);
+        // Nessun job pending, controlla se ce ne sono altri in running
+        const { count } = await supabase
+          .from('search_jobs')
+          .select('*', { count: 'exact', head: true })
+          .eq('batch_id', batch.id)
+          .eq('status', 'running');
+
+        // Se non ci sono nemmeno job in running, allora il batch è davvero finito
+        if (count === 0) {
+          console.log(`Batch ${batch.id} completed`);
+          await supabase
+            .from('search_batches')
+            .update({
+              status: 'completed',
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', batch.id);
+        }
         continue;
       }
 
-      const job: SearchJob = jobs[0];
-      console.log(`Processing job: ${job.id} - ${job.query}`);
-      
-      // Use batch name for the validation list
-      const batchName = batch.name;
+      console.log(`Found ${jobs.length} pending jobs to process in parallel`);
 
-      // Marca il job come running
-      await supabase
-        .from('search_jobs')
-        .update({ status: 'running' })
-        .eq('id', job.id);
+      // 3. Elabora i job in parallelo
+      const jobPromises = jobs.map(async (job: SearchJob) => {
+        try {
+          // Marca il job come running
+          await supabase
+            .from('search_jobs')
+            .update({ status: 'running' })
+            .eq('id', job.id);
 
-      try {
-        // Ottieni user_id del job
-        const { data: jobData } = await supabase
-          .from('search_jobs')
-          .select('user_id')
-          .eq('id', job.id)
-          .single();
+          // Use batch name for the validation list
+          const batchName = batch.name;
 
-        // Chiama search-contacts passando user_id nel body e batch_name per la validation list
-        const requestBody = {
-          query: job.query,
-          pages: job.pages,
-          location: job.location,
-          user_id: jobData?.user_id,
-          targetNames: job.target_names || [],
-          country: job.country || 'it', // 🌍 Pass country code (default: Italy)
-          batch_name: batchName, // Nome del batch per la validation list
-        };
-        
-        console.log('📍 CALLING search-contacts with:', JSON.stringify(requestBody, null, 2));
-        
-        const searchUrl = `${supabaseUrl}/functions/v1/search-contacts`;
-        const searchResponse = await fetch(searchUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseKey}`,
-          },
-          body: JSON.stringify(requestBody),
-        });
+          // Ottieni user_id del job
+          const { data: jobData } = await supabase
+            .from('search_jobs')
+            .select('user_id')
+            .eq('id', job.id)
+            .single();
 
-        if (!searchResponse.ok) {
-          const errorText = await searchResponse.text();
-          throw new Error(`Search failed: ${searchResponse.status} - ${errorText}`);
+          // Costruisci il body della richiesta
+          const requestBody = {
+            query: job.query,
+            pages: job.pages,
+            location: job.location,
+            user_id: jobData?.user_id,
+            targetNames: job.target_names || [],
+            country: job.country || 'it',
+            batch_name: batchName,
+          };
+
+          console.log(`[Job ${job.id}] Invoking search-contacts...`);
+
+          const searchUrl = `${supabaseUrl}/functions/v1/search-contacts`;
+          const searchResponse = await fetch(searchUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify(requestBody),
+          });
+
+          if (!searchResponse.ok) {
+            const errorText = await searchResponse.text();
+            throw new Error(`Search failed: ${searchResponse.status} - ${errorText}`);
+          }
+
+          const searchData = await searchResponse.json();
+          console.log(`[Job ${job.id}] Completed: ${searchData.contacts?.length || 0} contacts`);
+
+          // Ottieni l'ID della ricerca
+          const { data: latestSearch } = await supabase
+            .from('searches')
+            .select('id')
+            .eq('user_id', jobData?.user_id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          // Aggiorna il job come completato
+          await supabase
+            .from('search_jobs')
+            .update({
+              status: 'completed',
+              executed_at: new Date().toISOString(),
+              result_count: searchData.contacts?.length || 0,
+              search_id: latestSearch?.id,
+            })
+            .eq('id', job.id);
+
+          // Incrementa counter batch (atomico sarebbe meglio, ma per ora va bene così)
+          const { error: rpcError } = await supabase.rpc('increment_batch_counter', {
+            batch_uuid: batch.id,
+            field: 'completed_jobs'
+          });
+
+          if (rpcError) {
+            // Fallback se RPC non esiste (ma dovresti crearla per concorrenza sicura)
+            const { data: currentBatch } = await supabase.from('search_batches').select('completed_jobs').eq('id', batch.id).single();
+            if (currentBatch) {
+              await supabase.from('search_batches').update({ completed_jobs: currentBatch.completed_jobs + 1 }).eq('id', batch.id);
+            }
+          }
+
+        } catch (error) {
+          console.error(`[Job ${job.id}] Failed:`, error);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+          await supabase
+            .from('search_jobs')
+            .update({
+              status: 'failed',
+              executed_at: new Date().toISOString(),
+              error_message: errorMessage,
+            })
+            .eq('id', job.id);
+
+          // Incrementa errori
+          const { error: rpcError } = await supabase.rpc('increment_batch_counter', {
+            batch_uuid: batch.id,
+            field: 'failed_jobs'
+          });
+
+          if (rpcError) {
+            const { data: currentBatch } = await supabase.from('search_batches').select('failed_jobs').eq('id', batch.id).single();
+            if (currentBatch) {
+              await supabase.from('search_batches').update({ failed_jobs: currentBatch.failed_jobs + 1 }).eq('id', batch.id);
+            }
+          }
         }
+      });
 
-        const searchData = await searchResponse.json();
-        console.log(`Search completed: ${searchData.contacts?.length || 0} contacts found`);
+      // Attendi che tutti i job paralleli finiscano
+      await Promise.all(jobPromises);
+      jobsProcessedCount += jobs.length;
+    }
 
-        // Ottieni l'ID della ricerca appena creata per questo user
-        const { data: latestSearch } = await supabase
-          .from('searches')
-          .select('id')
-          .eq('user_id', jobData?.user_id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+    // 4. LOGICA RICORSIVA: Se abbiamo processato dei job, probabilmente ce ne sono altri.
+    // Rinvoca la funzione stessa per continuare il lavoro subito.
+    if (jobsProcessedCount > 0) {
+      console.log(`Processed ${jobsProcessedCount} jobs. Triggering next batch recursively...`);
 
-        // Aggiorna il job come completato
-        await supabase
-          .from('search_jobs')
-          .update({
-            status: 'completed',
-            executed_at: new Date().toISOString(),
-            result_count: searchData.contacts?.length || 0,
-            search_id: latestSearch?.id,
-          })
-          .eq('id', job.id);
-
-        // Aggiorna il contatore del batch
-        await supabase
-          .from('search_batches')
-          .update({
-            completed_jobs: batch.completed_jobs + 1,
-          })
-          .eq('id', batch.id);
-
-      } catch (error) {
-        console.error(`Job ${job.id} failed:`, error);
-        
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
-        // Marca il job come failed
-        await supabase
-          .from('search_jobs')
-          .update({
-            status: 'failed',
-            executed_at: new Date().toISOString(),
-            error_message: errorMessage,
-          })
-          .eq('id', job.id);
-
-        // Aggiorna il contatore failed del batch
-        await supabase
-          .from('search_batches')
-          .update({
-            failed_jobs: batch.failed_jobs + 1,
-          })
-          .eq('id', batch.id);
-      }
+      // Invoca asincronamente se stessa (fire & forget)
+      fetch(`${supabaseUrl}/functions/v1/process-search-queue`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({}),
+      }).catch(err => console.error("Error triggering recursive call:", err));
+    } else {
+      console.log("No jobs processed in this cycle. Queue empty or all batches completed.");
     }
 
     return new Response(
-      JSON.stringify({ message: 'Queue processed successfully' }),
+      JSON.stringify({ message: `Processed ${jobsProcessedCount} jobs` }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
@@ -191,7 +236,7 @@ Deno.serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
       JSON.stringify({ error: errorMessage }),
-      { 
+      {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
