@@ -1,0 +1,6 @@
+query,location,pages,target_names,country
+"site:instagram.com (#fitness OR #yoga) email (@gmail OR @yahoo)",London,10,"EMMA|OLIVIA|SOPHIE|LUCY|AMELIA|GRACE",uk
+"site:instagram.com #activewear (email OR contact) (@hotmail OR @outlook)",Manchester,10,"EMMA|OLIVIA|SOPHIE|LUCY",uk
+"site:instagram.com (#running OR #runningmotivation) email",Birmingham,8,"AMELIA|GRACE|EMMA|OLIVIA",uk
+"site:instagram.com #yogalife contact (@gmail OR @icloud)",Leeds,8,"SOPHIE|LUCY|AMELIA|GRACE",uk
+"site:instagram.com (#crossfit OR #fitnessmotivation) email",,10,"EMMA|OLIVIA|SOPHIE|LUCY|AMELIA|GRACE",uk

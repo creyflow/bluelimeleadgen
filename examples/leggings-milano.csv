@@ -1,0 +1,12 @@
+query,location,pages
+"leggings (site:facebook.com OR site:instagram.com) (""@gmail.com"" OR ""@yahoo.com"")",Milano,10
+"leggings (site:facebook.com OR site:instagram.com) (""@outlook.com"" OR ""@hotmail.com"")",Milano,10
+"leggings (site:linkedin.com OR site:pinterest.com) (""@gmail.com"")",Milano,8
+"abbigliamento sportivo (site:facebook.com OR site:instagram.com) (""@gmail.com"")",Milano,10
+"fitness wear (site:facebook.com) (""@gmail.com"" OR ""@yahoo.com"")",Milano,10
+"activewear (site:instagram.com OR site:pinterest.com) (""@gmail.com"")",Milano,8
+"leggings (site:facebook.com OR site:instagram.com) (""@gmail.com"" OR ""@yahoo.com"")",Monza,8
+"leggings (site:facebook.com OR site:instagram.com) (""@gmail.com"")",Bergamo,8
+"abbigliamento sportivo (site:facebook.com) (""@gmail.com"")",Brescia,8
+"fitness (site:instagram.com) (""@gmail.com"" OR ""@libero.it"")",Como,8
+"leggings (site:facebook.com OR site:instagram.com) (""@gmail.com"")",Lombardia,12

@@ -1,0 +1,9 @@
+query,location,pages,target_names,country
+"site:instagram.com (outfit OR running) email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:linkedin.com (fitness OR yoga) email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:tiktok.com (crossfit OR activewear) email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:facebook.com (wellness OR healthylifestyle) email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"fitness influencer email -site:linkedin.com -site:facebook.com",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"personal trainer donna email (@gmail OR @yahoo OR @hotmail)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"yoga instructor Italy email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"running coach Italia contatto email",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it

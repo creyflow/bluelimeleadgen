@@ -1,0 +1,6 @@
+query,location,pages,target_names,country
+"site:instagram.com (#fitness OR #yoga) (email OR kontakt) (@gmail OR @gmx)",Berlin,10,"ANNA|MARIA|LAURA|JULIA|SARAH|LISA|SOPHIE",de
+"site:instagram.com #activewear (email OR kontakt) (@web OR @t-online)",München,10,"ANNA|MARIA|LAURA|JULIA|SARAH",de
+"site:instagram.com (#running OR #laufen) email (@gmail OR @gmx)",Hamburg,8,"LISA|SOPHIE|ANNA|MARIA",de
+"site:instagram.com #yogalover email",Frankfurt,8,"JULIA|SARAH|LAURA|LISA",de
+"site:instagram.com (#crossfit OR #fitness) kontakt",,10,"ANNA|MARIA|LAURA|JULIA|SARAH|LISA|SOPHIE",de

@@ -1,0 +1,6 @@
+query,location,pages,target_names,country
+"site:instagram.com (outfit OR running) (@gmail OR @yahoo OR @hotmail)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:instagram.com (fitness OR yoga) (@gmail OR @yahoo OR @hotmail)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:instagram.com (crossfit OR activewear) (@gmail OR @yahoo OR @hotmail)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:instagram.com (wellness OR healthylifestyle) (@gmail OR @yahoo OR @hotmail)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
+"site:instagram.com (pilates OR workout) (@libero OR @virgilio OR @tiscali)",,,alice|sofia|giulia|martina|chiara|sara|elena|francesca|valentina|laura,it
