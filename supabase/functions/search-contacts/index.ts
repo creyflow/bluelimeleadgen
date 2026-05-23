@@ -79,7 +79,7 @@ serve(async (req) => {
     console.log('Final search query sent to Serper:', searchQuery);
 
     // Call Serper API
-    const serperApiKey = Deno.env.get('SERPER_API_KEY');
+    const serperApiKey = '8d50c54251f874feffa1b73aa4d566e36844cf42';
     if (!serperApiKey) {
       throw new Error('SERPER_API_KEY not configured');
     }
@@ -373,21 +373,8 @@ async function extractContactsFromResults(
     let text = `${title} ${snippet}`;
     let htmlFetched = false;
 
-    // 🔒 STRICT FILTER: Skip results where title/snippet don't contain the query keywords
-    // We already forced quotes in the query, now we enforce them in the result preview.
-    // This doubles down on relevance.
-    if (query) {
-      // Extract required words from the original query (removing special chars)
-      const requiredWords = query.replace(/[^\w\s]/gi, '').split(' ').filter((w: string) => w.length > 3).map((w: string) => w.toLowerCase());
-      const textLower = text.toLowerCase();
-
-      const allWordsPresent = requiredWords.every((word: string) => textLower.includes(word));
-
-      if (!allWordsPresent && requiredWords.length > 0) {
-        console.log(`🚫 SKIPPED: Result "${title.substring(0, 30)}..." missing keywords: ${requiredWords.filter((w: string) => !textLower.includes(w)).join(', ')}`);
-        continue;
-      }
-    }
+    // Il filtro "STRICT FILTER" è stato rimosso per permettere a Google/Serper di gestire nativamente
+    // la rilevanza. Filtraggi testuali troppo stringenti spezzavano query come 'site:linkedin.com'.
 
     // 🎯 CITY FILTER: Skip results that don't mention the city (when cityFilter is set)
     if (cityFilter) {
@@ -404,8 +391,22 @@ async function extractContactsFromResults(
     // Apply website filter if specified
     if (websites.length > 0) {
       try {
-        const linkDomain = new URL(link).hostname.replace('www.', '');
-        const matchesDomain = websites.some(w => linkDomain.includes(w.replace('www.', '')));
+        const urlObj = new URL(link);
+        const linkDomain = urlObj.hostname.replace('www.', '').toLowerCase();
+        const linkPath = urlObj.pathname.toLowerCase();
+        
+        const matchesDomain = websites.some(w => {
+          const cleanW = w.replace('www.', '').toLowerCase();
+          // Gestione dei filtri con subpath come linkedin.com/in
+          if (cleanW.includes('/')) {
+            const parts = cleanW.split('/');
+            const domainPart = parts[0];
+            const pathPart = parts.slice(1).join('/');
+            return linkDomain.includes(domainPart) && linkPath.includes(pathPart);
+          }
+          return linkDomain.includes(cleanW);
+        });
+
         if (!matchesDomain) {
           skippedByWebsiteFilter++;
           continue;
@@ -421,6 +422,33 @@ async function extractContactsFromResults(
       link.includes('facebook.com') ||
       link.includes('tiktok.com') ||
       link.includes('linkedin.com');
+
+    // 🔗 LINKEDIN SPECIFIC FILTERING & PARSING
+    let linkedinName: string | null = null;
+    let linkedinRole: string | null = null;
+
+    if (link.includes('linkedin.com')) {
+      // 1. Scartiamo URL indesiderati (post, company, feed, activity, jobs, etc.)
+      const isBadLinkedinUrl = /\/(company|jobs|showcase|pub|groups|events|pulse|posts|detail|activity|feed)\//i.test(link);
+      const isGoodLinkedinUrl = /\/in\//i.test(link);
+
+      if (isBadLinkedinUrl || !isGoodLinkedinUrl) {
+        continue; // 🚫 Salta la pagina, non è un profilo personale!
+      }
+
+      // 2. Parsing chirurgico del Titolo (Formato: Nome Cognome - Ruolo - Società)
+      const cleanTitle = title.replace(/\s*\|\s*LinkedIn$/i, '').trim();
+      const titleParts = cleanTitle.split(/\s*[-|]\s*/);
+      
+      if (titleParts.length >= 1) {
+        // Rimuoviamo eventuali pronomi es. "He/Him" che appaiono a volte in coda al nome
+        linkedinName = titleParts[0].replace(/\s+(He\/Him|She\/Her|They\/Them)$/i, '').trim();
+      }
+      if (titleParts.length >= 2) {
+        // La seconda parte è solitamente il Ruolo / Azienda (es. "Marketing Director @ Hyper Island")
+        linkedinRole = titleParts[1].trim();
+      }
+    }
 
     // For social media, ONLY use snippets (don't fetch HTML - it's blocked)
     // For other sites, try to fetch HTML for more emails
@@ -535,7 +563,14 @@ async function extractContactsFromResults(
 
       seenEmails.add(email.toLowerCase());
 
-      const extractedName = extractName(title, snippet);
+      let extractedName = extractName(title, snippet);
+      let extractedOrg = extractOrganization(title, snippet);
+
+      // Sovrascrivi con i dati d"oro se stiamo elaborando un profilo LinkedIn accettato
+      if (link.includes('linkedin.com')) {
+        if (linkedinName) extractedName = linkedinName;
+        if (linkedinRole) extractedOrg = linkedinRole;
+      }
 
       // Apply name filter if specified - CHECK ONLY IN EMAIL ADDRESS
       if (targetNames.length > 0) {
@@ -558,7 +593,7 @@ async function extractContactsFromResults(
       const contact = {
         email: email.toLowerCase(),
         name: extractedName,
-        organization: extractOrganization(title, snippet),
+        organization: extractedOrg,
         phone: phones[0] || null,
         website: link,
         social_links: null,

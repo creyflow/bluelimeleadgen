@@ -171,7 +171,7 @@ export default function BatchManager() {
           let location = parts[1] ? parts[1] : null;
           const pagesParsed = Number.parseInt(parts[2] || '');
           const targetNamesStr = parts[3] || '';
-          let country = (parts[4] || '').trim();
+          const country = (parts[4] || '').trim();
 
           // Se la location è vuota ma la query contiene un separatore (tab/;) con città alla fine, recuperala
           if (!location && /\t|;/.test(query)) {

@@ -13,6 +13,7 @@ const Search = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const isEmbedded = window.self !== window.top;
 
   const handleSearch = async (searchParams: any) => {
     setIsSearching(true);
@@ -49,20 +50,22 @@ const Search = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <header className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-4">
-            <img src={logo} alt="BluelimeLeads.com" className="h-14 w-auto" style={{ width: '44.8px' }} />
-            <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-green-500 to-blue-500 bg-clip-text text-transparent">BluelimeLeads.com</h1>
-              <p className="text-muted-foreground mt-1">Nuova Ricerca</p>
+        {/* Header (Hidden when embedded) */}
+        {!isEmbedded && (
+          <header className="flex justify-between items-center mb-8">
+            <div className="flex items-center gap-4">
+              <img src={logo} alt="BluelimeLeads.com" className="h-14 w-auto" style={{ width: '44.8px' }} />
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-green-500 to-blue-500 bg-clip-text text-transparent">BluelimeLeads.com</h1>
+                <p className="text-muted-foreground mt-1">Nuova Ricerca</p>
+              </div>
             </div>
-          </div>
-          <Button onClick={() => navigate('/dashboard')} variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Torna alla Dashboard
-          </Button>
-        </header>
+            <Button onClick={() => navigate('/dashboard')} variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Torna alla Dashboard
+            </Button>
+          </header>
+        )}
 
         {/* Search Form - Full Width */}
         <div className="mb-8">

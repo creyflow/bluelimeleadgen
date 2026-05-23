@@ -108,10 +108,9 @@ serve(async (req) => {
       }
     }
 
-    // Get Truelist API key
-    const truelistApiKey = Deno.env.get('TRUELIST_API_KEY');
-    if (!truelistApiKey) {
-      throw new Error('TRUELIST_API_KEY not configured');
+    const mailsApiKey = Deno.env.get('MAILS_SO_API_KEY') || '226ab8a5-7789-43f3-8e92-ce5390980993'; // Fallback to provided key
+    if (!mailsApiKey) {
+      throw new Error('MAILS_SO_API_KEY not configured');
     }
 
     let validationListId: string;
@@ -190,42 +189,23 @@ serve(async (req) => {
       console.log(`Created new validation list: ${validationListId}`);
     }
 
-    // Prepare data for Truelist Batch API
-    // Format: [['email1@example.com'], ['email2@example.com'], ...]
-    // Add a unique marker email to ensure payload uniqueness (Truelist checks content hash)
-    const uniqueMarker = `batch_${Date.now()}_${crypto.randomUUID().slice(0,8)}@marker.internal`;
-    const emailData = [
-      [uniqueMarker], // This will be marked invalid by Truelist but makes payload unique
-      ...emails.map(email => [email.trim().toLowerCase()])
-    ];
+    // Prepare data for Mails.so Batch API
+    const cleanEmails = emails.map(email => email.trim().toLowerCase());
     
-    // Create batch on Truelist
-    const formData = new FormData();
-    formData.append('data', JSON.stringify(emailData));
-    // Add UUID + timestamp to filename to avoid "Duplicate file upload" error from Truelist
-    const randomId = crypto.randomUUID().slice(0, 8);
-    const uniqueFilename = `batch_${randomId}_${Date.now()}.json`;
-    formData.append('filename', uniqueFilename);
+    console.log(`Creating Mails.so batch for ${emails.length} emails`);
 
-    // Add webhook URL for Truelist to call when validation is complete
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? 'https://vpselawcoxswncpixrno.supabase.co';
-    const webhookUrl = `${supabaseUrl}/functions/v1/process-validation-batch?list_id=${validationListId}`;
-    formData.append('webhook_url', webhookUrl);
-    console.log(`Setting webhook URL: ${webhookUrl}`);
-
-    console.log(`Creating Truelist batch for ${emails.length} emails with filename: ${uniqueFilename}`);
-
-    const truelistResponse = await fetch('https://api.truelist.io/api/v1/batches', {
+    const mailsResponse = await fetch('https://api.mails.so/v1/batch', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${truelistApiKey}`,
+        'x-mails-api-key': mailsApiKey,
+        'Content-Type': 'application/json'
       },
-      body: formData,
+      body: JSON.stringify({ emails: cleanEmails }),
     });
 
-    if (!truelistResponse.ok) {
-      const errorText = await truelistResponse.text();
-      console.error('Truelist API error:', truelistResponse.status, errorText);
+    if (!mailsResponse.ok) {
+      const errorText = await mailsResponse.text();
+      console.error('Mails.so API error:', mailsResponse.status, errorText);
       
       // Update list status to failed
       await supabaseAdmin
@@ -233,17 +213,17 @@ serve(async (req) => {
         .update({ status: 'failed' })
         .eq('id', validationListId);
         
-      throw new Error(`Truelist API error: ${truelistResponse.status} - ${errorText}`);
+      throw new Error(`Mails.so API error: ${mailsResponse.status} - ${errorText}`);
     }
 
-    const batchData: TruelistBatchResponse = await truelistResponse.json();
-    console.log(`Truelist batch created: ${batchData.id}, state: ${batchData.batch_state}`);
+    const batchData = await mailsResponse.json();
+    console.log(`Mails.so batch created: ${batchData.id}`);
 
-    // Save Truelist batch ID in database
+    // Save batch ID in database
     await supabaseAdmin
       .from('validation_lists')
       .update({ 
-        truelist_batch_id: batchData.id,
+        truelist_batch_id: batchData.id, // kept column name for compatibility
       })
       .eq('id', validationListId);
 

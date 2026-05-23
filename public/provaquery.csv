@@ -1,0 +1,6 @@
+query	location	pages	target_names	country
+"marketing (site:linkedin.com) ""@gmail.com"" ""milano"""	milano	10		it
+"marketing (site:linkedin.com) ""@gmail.com"" ""roma"""	roma	10		it
+"marketing (site:linkedin.com) ""@gmail.com"" ""torino"""	torino	10		it
+"marketing (site:linkedin.com) ""@gmail.com"" ""genova"""	genova	10		it
+"marketing (site:linkedin.com) ""@gmail.com"" ""napoli"""	nspoli	10		it

@@ -161,6 +161,12 @@ export const AdvancedQueryBuilder = ({ onQueryGenerated, onSearch }: AdvancedQue
     let normalized = url.trim().toLowerCase();
     normalized = normalized.replace(/^https?:\/\//, '');
     normalized = normalized.replace(/^www\./, '');
+    
+    // Forziamo le ricerche LinkedIn sui profili personali (/in)
+    if (normalized.includes('linkedin.com') || normalized === 'linkedin') {
+      return 'linkedin.com/in';
+    }
+
     normalized = normalized.split('/')[0];
     if (!normalized.includes('.')) {
       normalized += '.com';

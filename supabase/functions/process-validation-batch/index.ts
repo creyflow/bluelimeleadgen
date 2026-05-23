@@ -24,7 +24,7 @@ interface TruelistBatchResult {
 }
 
 // This function handles:
-// 1. Webhook from Truelist when batch completes
+// 1. Webhook from Mails.so (if supported)
 // 2. Manual polling to check batch status and fetch results
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -37,9 +37,9 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const truelistApiKey = Deno.env.get('TRUELIST_API_KEY');
-    if (!truelistApiKey) {
-      throw new Error('TRUELIST_API_KEY not configured');
+    const mailsApiKey = Deno.env.get('MAILS_SO_API_KEY') || '226ab8a5-7789-43f3-8e92-ce5390980993';
+    if (!mailsApiKey) {
+      throw new Error('MAILS_SO_API_KEY not configured');
     }
 
     const url = new URL(req.url);
@@ -47,12 +47,11 @@ Deno.serve(async (req) => {
     
     let batchId: string | null = null;
 
-    // Check if this is a webhook callback from Truelist
     if (req.method === 'POST') {
       try {
         const body = await req.json();
         batchId = body.batch_id || body.id;
-        console.log('Received webhook from Truelist, batch_id:', batchId);
+        console.log('Received webhook/ping, batch_id:', batchId);
       } catch {
         console.log('No JSON body, checking for manual trigger');
       }
@@ -82,7 +81,7 @@ Deno.serve(async (req) => {
         console.log(`Found ${processingLists.length} processing lists to check`);
         
         for (const list of processingLists) {
-          await processCompletedBatch(supabase, truelistApiKey, list.truelist_batch_id, list.id);
+          await processCompletedBatch(supabase, mailsApiKey, list.truelist_batch_id, list.id);
         }
         
         return new Response(
@@ -112,7 +111,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    await processCompletedBatch(supabase, truelistApiKey, batchId, validationList.id);
+    await processCompletedBatch(supabase, mailsApiKey, batchId, validationList.id);
 
     return new Response(
       JSON.stringify({ success: true, list_id: validationList.id }),
@@ -130,235 +129,104 @@ Deno.serve(async (req) => {
 
 async function processCompletedBatch(
   supabase: any,
-  truelistApiKey: string,
+  mailsApiKey: string,
   batchId: string,
   listId: string
 ) {
-  console.log(`Processing batch ${batchId} for list ${listId}`);
+  console.log(`Processing Mails.so batch ${batchId} for list ${listId}`);
 
-  // Get batch status from Truelist
-  const batchResponse = await fetch(`https://api.truelist.io/api/v1/batches/${batchId}`, {
+  // Fetch from Mails.so
+  const batchResponse = await fetch(`https://api.mails.so/v1/batch/${batchId}`, {
+    method: 'GET',
     headers: {
-      'Authorization': `Bearer ${truelistApiKey}`,
+      'x-mails-api-key': mailsApiKey,
     },
   });
 
   if (!batchResponse.ok) {
-    console.error('Failed to get batch status:', batchResponse.status);
+    console.error('Failed to get batch status from Mails.so:', batchResponse.status);
     return;
   }
 
-  const batchData: TruelistBatchResult = await batchResponse.json();
-  console.log('Batch status:', batchData.batch_state, 'processed:', batchData.processed_count, '/', batchData.email_count);
+  const batchData = await batchResponse.json();
 
-  if (batchData.batch_state !== 'completed') {
-    console.log('Batch not yet completed, current state:', batchData.batch_state);
-    
-    // Update progress
-    await supabase
-      .from('validation_lists')
-      .update({
-        processed_emails: batchData.processed_count,
-      })
-      .eq('id', listId);
-    
+  if (!batchData.finished_at) {
+    console.log('Batch not yet completed. Null finished_at property.');
     return;
   }
 
-  // Batch is complete - fetch results using annotated_csv_url
-  console.log('Batch completed! Fetching results from annotated CSV...');
+  console.log('Mails.so batch completed! Processing results...');
 
-  // Update counts from batch summary
+  const emailsArray = batchData.emails || [];
+  if (emailsArray.length === 0) {
+    console.log('No emails found in Mails.so response.');
+    return;
+  }
+
+  const validationResults: any[] = [];
+  let delivCount = 0;
+  let undelivCount = 0;
+  let riskyCount = 0;
+  let unkCount = 0;
+
+  for (const item of emailsArray) {
+    const email = item.email;
+    if (!email) continue;
+    
+    // Mails.so result can be: deliverable, undeliverable, risky, unknown
+    // Just lowercasing safety check
+    const result = (item.result || 'unknown').toLowerCase();
+    
+    if (result === 'deliverable') delivCount++;
+    else if (result === 'undeliverable') undelivCount++;
+    else if (result === 'risky') riskyCount++;
+    else unkCount++;
+
+    validationResults.push({
+      validation_list_id: listId,
+      email: email,
+      result: result,
+      reason: item.reason || '',
+      format_valid: item.isv_format === true,
+      domain_valid: item.isv_domain === true,
+      smtp_valid: item.isv_mx === true,
+      deliverable: result === 'deliverable',
+      catch_all: item.isv_nocatchall === false,
+      disposable: item.isv_noblock === false,
+      free_email: item.is_free === true,
+      full_response: item,
+    });
+  }
+
+  console.log(`Parsed ${validationResults.length} results from Mails.so JSON`);
+
+  // Update counts
   await supabase
     .from('validation_lists')
     .update({
-      processed_emails: batchData.processed_count,
-      deliverable_count: batchData.ok_count || 0,
-      risky_count: batchData.ok_for_all_count || 0,
-      undeliverable_count: (batchData.failed_mx_check_count || 0) + (batchData.failed_no_mailbox_count || 0) + (batchData.failed_syntax_check_count || 0),
-      unknown_count: batchData.unknown_count || 0,
+      processed_emails: emailsArray.length,
+      deliverable_count: delivCount,
+      risky_count: riskyCount,
+      undeliverable_count: undelivCount,
+      unknown_count: unkCount,
       status: 'completed',
     })
     .eq('id', listId);
 
-  // Use annotated_csv_url to get detailed results
-  if (!batchData.annotated_csv_url) {
-    console.log('No annotated_csv_url available, skipping detailed results');
-    return;
-  }
+  // Insert results in batches of 100
+  const batchSize = 100;
+  for (let i = 0; i < validationResults.length; i += batchSize) {
+    const batch = validationResults.slice(i, i + batchSize);
+    const { error: insertError } = await supabase
+      .from('validation_results')
+      .insert(batch);
 
-  console.log('Downloading annotated CSV from:', batchData.annotated_csv_url);
-
-  try {
-    const csvResponse = await fetch(batchData.annotated_csv_url);
-    
-    if (!csvResponse.ok) {
-      console.error('Failed to download annotated CSV:', csvResponse.status);
-      return;
-    }
-
-    const csvText = await csvResponse.text();
-    const lines = csvText.split('\n').filter(line => line.trim());
-    
-    if (lines.length < 2) {
-      console.log('CSV has no data rows');
-      return;
-    }
-
-    // Parse CSV header to find column indices
-    const header = parseCSVLine(lines[0]);
-    const headerLower = header.map(h => h.toLowerCase().trim());
-    
-    // Find email column - check multiple possible names
-    const emailIndex = headerLower.findIndex(h => 
-      h === 'email' || h === 'email address' || h === 'address'
-    );
-    
-    // Find state column - check multiple possible names
-    const stateIndex = headerLower.findIndex(h => 
-      h === 'email state' || h === 'email_state' || h === 'state' || h === 'result'
-    );
-    
-    // Find sub-state column
-    const subStateIndex = headerLower.findIndex(h => 
-      h === 'email sub-state' || h === 'email_sub_state' || h === 'sub_state' || h === 'sub-state' || h === 'reason'
-    );
-
-    console.log(`CSV columns - email: ${emailIndex}, state: ${stateIndex}, subState: ${subStateIndex}`);
-    console.log('Header row:', header);
-
-    // If standard columns not found, use reasonable defaults
-    const emailColumnIndex = emailIndex !== -1 ? emailIndex : 1; // Usually column 1 is email
-    const resultColumnIndex = stateIndex !== -1 ? stateIndex : 3; // Usually column 3 is state
-
-    const validationResults: any[] = [];
-    
-    // Process data rows
-    for (let i = 1; i < lines.length; i++) {
-      const row = parseCSVLine(lines[i]);
-      if (row.length < 2) continue;
-
-      const email = row[emailColumnIndex]?.trim();
-      if (!email || !email.includes('@')) continue;
-
-      // Parse the validation result - could be in different formats
-      const stateValue = row[resultColumnIndex]?.trim().toLowerCase() || '';
-      const subStateValue = subStateIndex !== -1 ? row[subStateIndex]?.trim().toLowerCase() : '';
-
-      let result = 'unknown';
-      let formatValid = true;
-      let domainValid = true;
-      let smtpValid = false;
-      let deliverable = false;
-      let catchAll = false;
-      let disposable = false;
-
-      // Map Truelist states to our format
-      // Truelist uses: ok, invalid, unknown, risky
-      // Sub-states: email_ok, failed_syntax_check, failed_mx_check, failed_no_mailbox, ok_for_all, disposable
-      if (stateValue === 'ok' || stateValue === 'deliverable' || stateValue === 'valid' || stateValue === 'email_ok') {
-        result = 'deliverable';
-        smtpValid = true;
-        deliverable = true;
-      } else if (stateValue === 'invalid' || stateValue === 'undeliverable' || stateValue === 'email_invalid') {
-        result = 'undeliverable';
-      } else if (stateValue === 'risky') {
-        result = 'risky';
-      } else if (stateValue === 'unknown') {
-        result = 'unknown';
-      }
-      
-      // Also check sub_state for more accurate categorization
-      if (subStateValue === 'email_ok' || subStateValue === 'ok') {
-        result = 'deliverable';
-        smtpValid = true;
-        deliverable = true;
-      } else if (subStateValue === 'email_invalid' || subStateValue === 'invalid') {
-        result = 'undeliverable';
-      }
-
-      // Check sub-states for more detail
-      if (subStateValue.includes('syntax') || subStateValue.includes('failed_syntax')) {
-        formatValid = false;
-        result = 'undeliverable';
-      }
-      if (subStateValue.includes('mx') || subStateValue.includes('failed_mx')) {
-        domainValid = false;
-        result = 'undeliverable';
-      }
-      if (subStateValue.includes('accept_all') || subStateValue.includes('ok_for_all') || subStateValue.includes('catch_all')) {
-        catchAll = true;
-        result = 'risky';
-      }
-      if (subStateValue.includes('disposable')) {
-        disposable = true;
-        result = 'risky';
-      }
-
-      validationResults.push({
-        validation_list_id: listId,
-        email,
-        result,
-        reason: subStateValue || stateValue,
-        format_valid: formatValid,
-        domain_valid: domainValid,
-        smtp_valid: smtpValid,
-        deliverable,
-        catch_all: catchAll,
-        disposable,
-        free_email: false,
-        full_response: { state: stateValue, sub_state: subStateValue, row: row },
-      });
-    }
-
-    console.log(`Parsed ${validationResults.length} results from CSV`);
-
-    // Insert results in batches of 100
-    const batchSize = 100;
-    for (let i = 0; i < validationResults.length; i += batchSize) {
-      const batch = validationResults.slice(i, i + batchSize);
-      const { error: insertError } = await supabase
-        .from('validation_results')
-        .insert(batch);
-
-      if (insertError) {
-        console.error(`Error inserting batch ${i / batchSize + 1}:`, insertError);
-      } else {
-        console.log(`Inserted batch ${i / batchSize + 1} (${batch.length} results)`);
-      }
-    }
-
-    console.log(`Finished processing batch ${batchId}`);
-
-  } catch (csvError) {
-    console.error('Error processing annotated CSV:', csvError);
-  }
-}
-
-// Simple CSV line parser that handles quoted fields
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = '';
+    if (insertError) {
+      console.error(`Error inserting batch ${i / batchSize + 1}:`, insertError);
     } else {
-      current += char;
+      console.log(`Inserted batch ${i / batchSize + 1} (${batch.length} results)`);
     }
   }
-  
-  result.push(current.trim());
-  return result;
+
+  console.log(`Finished processing Mails.so batch ${batchId}`);
 }

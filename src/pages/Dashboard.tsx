@@ -15,6 +15,7 @@ const Dashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const isEmbedded = window.self !== window.top;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -49,26 +50,28 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
-        {/* Header with Actions */}
-        <header className="flex justify-between items-center mb-12">
-          <div className="flex items-center gap-4">
-            <img src={logo} alt="BluelimeLeads.com" className="h-14 w-auto" style={{ width: '44.8px' }} />
-            <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-green-500 to-blue-500 bg-clip-text text-transparent">BluelimeLeads.com</h1>
-              <p className="text-muted-foreground mt-1">Dashboard centrale</p>
+        {/* Header with Actions (Hidden when embedded) */}
+        {!isEmbedded && (
+          <header className="flex justify-between items-center mb-12">
+            <div className="flex items-center gap-4">
+              <img src={logo} alt="BluelimeLeads.com" className="h-14 w-auto" style={{ width: '44.8px' }} />
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-green-500 to-blue-500 bg-clip-text text-transparent">BluelimeLeads.com</h1>
+                <p className="text-muted-foreground mt-1">Dashboard centrale</p>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={() => navigate('/profile')} variant="ghost" size="sm">
-              <User className="mr-2 h-4 w-4" />
-              Profilo
-            </Button>
-            <Button onClick={handleLogout} variant="outline" size="sm">
-              <LogOut className="mr-2 h-4 w-4" />
-              Esci
-            </Button>
-          </div>
-        </header>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => navigate('/profile')} variant="ghost" size="sm">
+                <User className="mr-2 h-4 w-4" />
+                Profilo
+              </Button>
+              <Button onClick={handleLogout} variant="outline" size="sm">
+                <LogOut className="mr-2 h-4 w-4" />
+                Esci
+              </Button>
+            </div>
+          </header>
+        )}
 
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
